@@ -129,7 +129,17 @@ function drawScene(c, i, live) {
     }
 }
 
+// Pointer moves can fire hundreds of times a second; redraw at most once per screen frame.
+let renderFrame = 0, queuedPreview = null;
+function scheduleRender(preview) {
+    queuedPreview = preview;
+    if (!renderFrame) renderFrame = requestAnimationFrame(() => render(queuedPreview));
+}
+
 function render(preview) {
+    cancelAnimationFrame(renderFrame);
+    renderFrame = 0;
+    queuedPreview = null;
     drawScene(ctx, current, true);
     if (float) withLocal(ctx, c => {
         const f = float, s = 1 / Math.abs(curT().sx), rh = -f.h / 2 - 24 * s;
@@ -159,8 +169,15 @@ function render(preview) {
     placeCursors();
 }
 
+// Rebuilds the timeline DOM only when layers/frames change; moving the playhead just
+// updates a few classes (this runs on every frame during playback and scrubbing).
+let timelineSig = "";
 function drawTimeline() {
     const n = Math.max(total(), current + 1) + 30;
+    const sig = JSON.stringify([n, layerIdx, layers.map(l => [l.name, l.hidden, l.locked,
+        l.frames.map(k => k.id + (k.empty ? "" : "+") + (k.tween ? "t" : "")).join()])]);
+    if (sig === timelineSig) return movePlayhead();
+    timelineSig = sig;
 
     const list = $("layerList");
     list.innerHTML = "";
@@ -226,6 +243,22 @@ function drawTimeline() {
     ph.style.left = current * CW + CW / 2 + "px";
     grid.append(ph);
 
+    const wrap = $("gridWrap"), x = current * CW;
+    if (x < wrap.scrollLeft || x + CW > wrap.scrollLeft + wrap.clientWidth) wrap.scrollLeft = x - wrap.clientWidth / 2;
+    $("counter").textContent = `${current + 1} / ${total()}`;
+}
+
+function movePlayhead() {
+    const grid = $("grid");
+    for (const el of grid.querySelectorAll(".now, .sel")) {
+        el.classList.remove("now", "sel");
+        if (el.classList.contains("rc")) el.textContent = +el.dataset.i === 0 || (+el.dataset.i + 1) % 5 === 0 ? +el.dataset.i + 1 : "";
+    }
+    const rc = grid.querySelector(`.rc[data-i="${current}"]`);
+    rc.classList.add("now");
+    rc.textContent = current + 1;
+    grid.querySelector(`.c[data-l="${layerIdx}"][data-i="${current}"]`)?.classList.add("sel");
+    grid.querySelector(".ph").style.left = current * CW + CW / 2 + "px";
     const wrap = $("gridWrap"), x = current * CW;
     if (x < wrap.scrollLeft || x + CW > wrap.scrollLeft + wrap.clientWidth) wrap.scrollLeft = x - wrap.clientWidth / 2;
     $("counter").textContent = `${current + 1} / ${total()}`;
@@ -370,7 +403,7 @@ function stroke(k, a, b) {
     c.lineTo(b.x, b.y);
     c.stroke();
     c.globalCompositeOperation = "source-over";
-    render();
+    scheduleRender();
 }
 
 function shape(c, a, b, constrain) {
@@ -454,7 +487,7 @@ function transformDown(p) {
                 k.t.x = t0.x + q.X - p.X;
                 k.t.y = t0.y + q.Y - p.Y;
             }
-            render();
+            scheduleRender();
             showKeyProps();
         },
         up: done,
@@ -528,7 +561,7 @@ function selectDown(p) {
                 move(q, e) {
                     const r = r0 + Math.atan2(q.y - f.cy, q.x - f.cx) - a0;
                     f.r = e.shiftKey ? Math.round(r / (Math.PI / 12)) * Math.PI / 12 : r;
-                    render();
+                    scheduleRender();
                 },
                 up() {},
             };
@@ -550,7 +583,7 @@ function selectDown(p) {
                     const cu = a * (w - start.w) / 2, cv = b * (h - start.h) / 2;
                     const cos = Math.cos(f.r), sin = Math.sin(f.r);
                     Object.assign(f, { w, h, cx: start.cx + cu * cos - cv * sin, cy: start.cy + cu * sin + cv * cos });
-                    render();
+                    scheduleRender();
                 },
                 up() {},
             };
@@ -558,7 +591,7 @@ function selectDown(p) {
         }
         if (Math.abs(p0.u) <= f.w / 2 && Math.abs(p0.v) <= f.h / 2) {
             const dx = p.x - f.cx, dy = p.y - f.cy;
-            drag = { move(q) { f.cx = q.x - dx; f.cy = q.y - dy; render(); }, up() {} };
+            drag = { move(q) { f.cx = q.x - dx; f.cy = q.y - dy; scheduleRender(); }, up() {} };
             return;
         }
         dropFloat();
@@ -566,7 +599,7 @@ function selectDown(p) {
     }
     if (current >= L().frames.length) return;
     drag = {
-        move: q => render(c => {
+        move: q => scheduleRender(c => {
             c.setLineDash([5, 4]);
             c.lineWidth = 1;
             c.strokeStyle = "#000";
@@ -641,7 +674,7 @@ stage.addEventListener("pointerdown", e => {
         drag = { move(q) { stroke(k, last, q); last = q; }, up: () => commit(k) };
     } else {
         drag = {
-            move: (q, e) => render(c => shape(c, p, q, e.shiftKey)),
+            move: (q, e) => scheduleRender(c => shape(c, p, q, e.shiftKey)),
             up(q, e) { shape(k.getContext("2d"), p, q, e.shiftKey); commit(k); },
         };
     }
@@ -1397,7 +1430,7 @@ grid.onpointerup = grid.onpointercancel = () => {
     const d = tdrag;
     tdrag = null;
     if (d && !d.scrub && d.to !== d.from) moveFrames(d.from, d.n, d.to);
-    else drawTimeline();
+    else grid.querySelector(".ghost")?.remove();
 };
 $("grid").oncontextmenu = e => {
     e.preventDefault();
