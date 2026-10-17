@@ -42,7 +42,7 @@
         </div>
 
         <section id="propsTab" class="props">
-            <h2>Tool</h2>
+            <h2>Tool: <span id="toolName">Brush</span></h2>
             <label>Stroke <input type="color" id="stroke" value="#000000"></label>
             <label>Fill <input type="color" id="fill" value="#3b82f6"></label>
             <label><input type="checkbox" id="fillShapes"> Fill shapes</label>
@@ -66,6 +66,10 @@
             <label>Stage color <input type="color" id="bgColor" value="#ffffff"></label>
             <label>FPS <input type="number" id="fps" min="1" max="60" value="12"></label>
             <label><input type="checkbox" id="onion" checked> Onion skin</label>
+            <div class="onionrange">
+                <label>Frames before <input type="number" id="onionBefore" min="0" max="20" value="2"></label>
+                <label>Frames after <input type="number" id="onionAfter" min="0" max="20" value="1"></label>
+            </div>
             <label><input type="checkbox" id="loop" checked> Loop</label>
         </section>
 
@@ -93,6 +97,7 @@
                 <input type="checkbox" id="autoKey" checked> Auto keyframe
             </label>
             <span id="status" role="status"></span>
+            <span id="people"></span>
             <span class="spacer"></span>
             <button id="addLayerBtn" title="New layer">+ Layer</button>
             <button id="delLayerBtn" title="Delete layer">− Layer</button>

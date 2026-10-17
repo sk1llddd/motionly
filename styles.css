@@ -99,6 +99,8 @@ input[type=color] { width: 36px; height: 24px; border: 1px solid #444; backgroun
     overflow-y: auto;
 }
 .tools button { width: 36px; height: 36px; padding: 0; font-size: 18px; flex: none; }
+.tools button { position: relative; display: grid; place-items: center; }
+.tools .key { position: absolute; right: 2px; bottom: 0; font-size: 9px; opacity: 0.55; }
 .tools button.active { background: #4a9eff; border-color: #4a9eff; color: #fff; }
 
 /* ---------- stage ---------- */
@@ -207,6 +209,12 @@ input[type=color] { width: 36px; height: 24px; border: 1px solid #444; backgroun
 .controls { display: flex; align-items: center; gap: 4px; padding: 6px 10px; flex-wrap: wrap; }
 #counter { margin-left: 8px; color: #aaa; font-variant-numeric: tabular-nums; }
 .autokey { display: flex; align-items: center; gap: 4px; margin-left: 12px; color: #aaa; }
+.onionrange { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.onionrange label { flex-direction: column; align-items: stretch; gap: 2px; font-size: 11px; color: #aaa; }
+#people { display: flex; gap: 4px; margin-left: 8px; }
+.person { padding: 2px 8px; border-width: 2px; border-radius: 12px; font-size: 12px; }
+.ghost { position: absolute; height: 24px; background: #4a9eff66; outline: 2px solid #4a9eff; pointer-events: none; }
+.grid { touch-action: none; user-select: none; }
 #status { margin-left: 12px; color: #ffcf5a; }
 
 .tl { display: flex; height: 150px; overflow-y: auto; border-top: 1px solid #111; }

@@ -4,7 +4,7 @@ const stage = $("canvas");
 const ctx = stage.getContext("2d");
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
 const CW = 14;                       // timeline cell width, matches --cw
-const CORNERS = [[0, 0], [1, 0], [0, 1], [1, 1]];
+const HANDLES = [[-1, -1], [0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0]];   // selection box, in half-sizes
 
 // A layer's `frames` holds one canvas per frame. A keyframe's canvas is repeated
 // for every frame of its span, so frames[i] === frames[i - 1] means "not a keyframe".
@@ -81,17 +81,30 @@ function withLocal(c, fn) {
 
 const tint = canvas(), tctx = tint.getContext("2d");
 
-function onion(c, f, j, color) {
-    if (j < 0 || j >= f.length) return;
+function onion(c, f, j, color, alpha) {
     tctx.globalCompositeOperation = "copy";
     tctx.drawImage(f[j], 0, 0);
     tctx.globalCompositeOperation = "source-in";
     tctx.fillStyle = color;
     tctx.fillRect(0, 0, W, H);
     const t = transformAt(f, j);
-    c.globalAlpha = 0.25 * t.a;
+    c.globalAlpha = alpha * t.a;
     c.setTransform(matrix(t));
     c.drawImage(tint, 0, 0);
+}
+
+// Up to N frames each way, fading with distance. A held drawing is only shown once.
+function drawOnion(c, f, i) {
+    for (const [dir, id, color] of [[-1, "onionBefore", "#ff3030"], [1, "onionAfter", "#20b040"]]) {
+        const n = Math.min(20, Math.max(0, +$(id).value || 0)), seen = new Set([f[i]]), list = [];
+        for (let d = 1; d <= n; d++) {
+            const j = i + dir * d, k = f[j];
+            if (!k || (seen.has(k) && !k.tween)) continue;
+            seen.add(k);
+            list.push([j, 0.35 * (1 - (d - 1) / n)]);
+        }
+        for (const [j, a] of list.reverse()) onion(c, f, j, color, a);     // farthest first
+    }
 }
 
 function drawScene(c, i, live) {
@@ -104,14 +117,13 @@ function drawScene(c, i, live) {
         const l = layers[n], f = l.frames;
         if (l.hidden || i >= f.length) continue;
         if (live && n === layerIdx && $("onion").checked && !player) {
-            onion(c, f, i - 1, "#ff3030");
-            onion(c, f, i + 1, "#20b040");
+            drawOnion(c, f, i);
         }
         const t = transformAt(f, i);
         c.globalAlpha = t.a;
         c.setTransform(matrix(t));
         c.drawImage(f[i], 0, 0);
-        if (live && float && float.k === f[i]) c.drawImage(float.c, float.x, float.y, float.w, float.h);
+        if (live && float && float.k === f[i]) drawFloat(c, float);
         c.globalAlpha = 1;
         c.setTransform(1, 0, 0, 1, 0, 0);
     }
@@ -120,18 +132,28 @@ function drawScene(c, i, live) {
 function render(preview) {
     drawScene(ctx, current, true);
     if (float) withLocal(ctx, c => {
-        const s = 1 / Math.abs(curT().sx);
+        const f = float, s = 1 / Math.abs(curT().sx), rh = -f.h / 2 - 24 * s;
+        c.translate(f.cx, f.cy);
+        c.rotate(f.r);
         c.lineWidth = s;
         c.strokeStyle = "#4a9eff";
         c.setLineDash([4 * s, 3 * s]);
-        c.strokeRect(float.x, float.y, float.w, float.h);
+        c.strokeRect(-f.w / 2, -f.h / 2, f.w, f.h);
         c.setLineDash([]);
+        c.beginPath();
+        c.moveTo(0, -f.h / 2);
+        c.lineTo(0, rh);
+        c.stroke();
         c.fillStyle = "#fff";
-        for (const [u, v] of CORNERS) {
-            const x = float.x + u * float.w - 4 * s, y = float.y + v * float.h - 4 * s;
+        for (const [a, b] of HANDLES) {
+            const x = a * f.w / 2 - 4 * s, y = b * f.h / 2 - 4 * s;
             c.fillRect(x, y, 8 * s, 8 * s);
             c.strokeRect(x, y, 8 * s, 8 * s);
         }
+        c.beginPath();
+        c.arc(0, rh, 5 * s, 0, Math.PI * 2);      // rotate handle
+        c.fill();
+        c.stroke();
     });
     if (preview) withLocal(ctx, preview);
     placeCursors();
@@ -441,11 +463,26 @@ function transformDown(p) {
 
 // ---------- selection / floating objects ----------
 
+// float = { k: keyframe it belongs to, c: its pixels, cx, cy: center, w, h, r: rotation in radians }
+function drawFloat(c, f) {
+    c.save();
+    c.translate(f.cx, f.cy);
+    c.rotate(f.r);
+    c.drawImage(f.c, -f.w / 2, -f.h / 2, f.w, f.h);
+    c.restore();
+}
+
+// A point in the float's own frame: centered on it and unrotated.
+function toFloat(f, p) {
+    const dx = p.x - f.cx, dy = p.y - f.cy, cos = Math.cos(f.r), sin = Math.sin(f.r);
+    return { u: dx * cos + dy * sin, v: -dx * sin + dy * cos };
+}
+
 function dropFloat() {
     if (!float) return;
     const f = float;
     float = null;
-    f.k.getContext("2d").drawImage(f.c, f.x, f.y, f.w, f.h);
+    drawFloat(f.k.getContext("2d"), f);
     f.k.empty = false;
     pending.add(f.k);
 }
@@ -460,7 +497,7 @@ function cutFloat(x, y, w, h) {
     const c = canvas(w, h);
     c.getContext("2d").drawImage(k, x, y, w, h, 0, 0, w, h);
     k.getContext("2d").clearRect(x, y, w, h);
-    float = { k, c, x, y, w, h, ar: w / h };
+    float = { k, c, cx: x + w / 2, cy: y + h / 2, w, h, r: 0 };
     done();
 }
 
@@ -477,37 +514,51 @@ function place(src) {
     const s = Math.min(1, W * 0.9 / src.width, H * 0.9 / src.height);
     const w = src.width * s, h = src.height * s;
     const mid = matrix(curT()).inverse().transformPoint(new DOMPoint(W / 2, H / 2));
-    float = { k, c, x: mid.x - w / 2, y: mid.y - h / 2, w, h, ar: w / h };
+    float = { k, c, cx: mid.x, cy: mid.y, w, h, r: 0 };
     done();
 }
 
 function selectDown(p) {
     if (float) {
-        const hs = 8 / Math.abs(curT().sx);
-        const hit = CORNERS.find(([u, v]) =>
-            Math.abs(p.x - (float.x + u * float.w)) < hs && Math.abs(p.y - (float.y + v * float.h)) < hs);
-        if (hit) {
-            const ox = float.x + (1 - hit[0]) * float.w, oy = float.y + (1 - hit[1]) * float.h;
+        const f = float, s = 1 / Math.abs(curT().sx), p0 = toFloat(f, p);
+        const near = (u, v) => Math.abs(p0.u - u) < 8 * s && Math.abs(p0.v - v) < 8 * s;
+        if (near(0, -f.h / 2 - 24 * s)) {          // rotate; Shift snaps to 15°
+            const a0 = Math.atan2(p.y - f.cy, p.x - f.cx), r0 = f.r;
             drag = {
                 move(q, e) {
-                    let w = q.x - ox, h = q.y - oy;
-                    if (!e.shiftKey) {           // keep aspect ratio unless Shift
-                        if (Math.abs(w) / float.ar > Math.abs(h)) h = (Math.sign(h) || 1) * Math.abs(w) / float.ar;
-                        else w = (Math.sign(w) || 1) * Math.abs(h) * float.ar;
-                    }
-                    float.x = Math.min(ox, ox + w);
-                    float.y = Math.min(oy, oy + h);
-                    float.w = Math.max(1, Math.abs(w));
-                    float.h = Math.max(1, Math.abs(h));
+                    const r = r0 + Math.atan2(q.y - f.cy, q.x - f.cx) - a0;
+                    f.r = e.shiftKey ? Math.round(r / (Math.PI / 12)) * Math.PI / 12 : r;
                     render();
                 },
                 up() {},
             };
             return;
         }
-        if (p.x >= float.x && p.x <= float.x + float.w && p.y >= float.y && p.y <= float.y + float.h) {
-            const dx = p.x - float.x, dy = p.y - float.y;
-            drag = { move(q) { float.x = q.x - dx; float.y = q.y - dy; render(); }, up() {} };
+        const hit = HANDLES.find(([a, b]) => near(a * f.w / 2, b * f.h / 2));
+        if (hit) {                                 // stretch from the opposite side; Shift on a corner keeps proportions
+            const [a, b] = hit, start = { ...f };
+            drag = {
+                move(q, e) {
+                    const fq = toFloat(start, q);
+                    let w = a ? Math.max(1, (fq.u + a * start.w / 2) * a) : start.w;
+                    let h = b ? Math.max(1, (fq.v + b * start.h / 2) * b) : start.h;
+                    if (e.shiftKey && a && b) {
+                        const k = Math.max(w / start.w, h / start.h);
+                        w = start.w * k;
+                        h = start.h * k;
+                    }
+                    const cu = a * (w - start.w) / 2, cv = b * (h - start.h) / 2;
+                    const cos = Math.cos(f.r), sin = Math.sin(f.r);
+                    Object.assign(f, { w, h, cx: start.cx + cu * cos - cv * sin, cy: start.cy + cu * sin + cv * cos });
+                    render();
+                },
+                up() {},
+            };
+            return;
+        }
+        if (Math.abs(p0.u) <= f.w / 2 && Math.abs(p0.v) <= f.h / 2) {
+            const dx = p.x - f.cx, dy = p.y - f.cy;
+            drag = { move(q) { f.cx = q.x - dx; f.cy = q.y - dy; render(); }, up() {} };
             return;
         }
         dropFloat();
@@ -659,6 +710,46 @@ function clearKey(f) {
     if (current === 0 || !isKey(f, current)) return;
     const k = f[current], prev = f[current - 1];
     for (let m = current; f[m] === k; m++) f[m] = prev;
+}
+
+let frameClip = null;
+
+function copyFrame() {
+    const f = L().frames;
+    if (current >= f.length) return flash("Nothing on this frame to copy");
+    dropFloat();
+    frameClip = copyKey(f[current]);
+    frameClip.t = { ...transformAt(f, current) };
+    flash(`Copied frame ${current + 1} of "${L().name}"`);
+}
+
+// Replaces the drawing from this frame to the end of its span with the copied frame.
+const pasteFrame = frameOp(f => {
+    if (!frameClip) return flash("Copy a frame first");
+    const k = copyKey(frameClip);
+    if (current >= f.length) {
+        const last = f[f.length - 1];
+        while (f.length < current) f.push(last);
+        f.push(k);
+        return;
+    }
+    const old = f[current];
+    for (let m = current; f[m] === old; m++) f[m] = k;
+});
+
+// Timeline drag: moves the keyframe block [s, s + n) so it starts at `to`.
+function moveFrames(s, n, to) {
+    frameOp(f => {
+        const block = f.splice(s, n), pad = f[f.length - 1] || blank();
+        while (f.length < to) f.push(pad);
+        f.splice(to, 0, ...block);
+        const after = f[to + n];
+        if (after && after === f[to - 1]) {        // dropped inside another span: split it so the halves aren't one shared drawing
+            const c = Object.assign(copyKey(after), { tween: after.tween, ease: after.ease });
+            for (let m = to + n; f[m] === after; m++) f[m] = c;
+        }
+        current = to;
+    })();
 }
 
 function setTween(on) {
@@ -1014,17 +1105,24 @@ async function exportVideo() {
 
 // ---------- tools ----------
 
-const TOOLS = [
-    ["select", "⬉", "Selection — drag to select, drag corners to resize", "V"],
-    ["transform", "⤧", "Free Transform — drag to move keyframe, Shift+drag to rotate", "Q"],
-    ["brush", "✎", "Brush", "B"],
-    ["eraser", "⌫", "Eraser", "E"],
-    ["line", "╱", "Line", "L"],
-    ["rect", "▭", "Rectangle — Shift for square", "R"],
-    ["ellipse", "◯", "Oval — Shift for circle", "O"],
-    ["text", "T", "Text", "T"],
-    ["fill", "◧", "Paint Bucket", "K"],
-    ["eyedropper", "⌖", "Eyedropper — Shift-click picks fill", "I"],
+const TOOLS = [      // [id, svg icon, name, shortcut]
+    ["select", '<path d="M4.04 4.69a.5.5 0 0 1 .65-.65l16 6.5a.5.5 0 0 1-.06.95l-6.13 1.58a2 2 0 0 0-1.43 1.43l-1.58 6.13a.5.5 0 0 1-.95.06z"/>',
+        "Selection — drag a box to select; drag the handles to stretch, the circle to rotate (Shift snaps)", "V"],
+    ["transform", '<rect x="6" y="6" width="12" height="12" stroke-dasharray="3 3"/><path d="M3 3h4v4H3zM17 3h4v4h-4zM3 17h4v4H3zM17 17h4v4h-4z" fill="currentColor"/>',
+        "Free Transform — drag to move the whole keyframe, Shift+drag to rotate it", "Q"],
+    ["brush", '<path d="m9.06 11.9 8.07-8.06a2.85 2.85 0 1 1 4.03 4.03l-8.06 8.08"/><path d="M7.07 14.94c-1.66 0-3 1.35-3 3.02 0 1.33-2.5 1.52-2 2.02 1.08 1.1 2.49 2.02 4 2.02 2.2 0 4-1.8 4-4.04a3.01 3.01 0 0 0-3-3.02z"/>',
+        "Brush", "B"],
+    ["eraser", '<path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/>',
+        "Eraser", "E"],
+    ["line", '<path d="M5 19 19 5"/><circle cx="5" cy="19" r="1.5" fill="currentColor"/><circle cx="19" cy="5" r="1.5" fill="currentColor"/>',
+        "Line", "L"],
+    ["rect", '<rect x="3" y="6" width="18" height="12" rx="1"/>', "Rectangle — Shift for square", "R"],
+    ["ellipse", '<ellipse cx="12" cy="12" rx="9" ry="7"/>', "Oval — Shift for circle", "O"],
+    ["text", '<path d="M4 7V4h16v3M9 20h6M12 4v16"/>', "Text", "T"],
+    ["fill", '<path d="m19 11-8-8-8.6 8.6a2 2 0 0 0 0 2.8l5.2 5.2c.8.8 2 .8 2.8 0L19 11Z"/><path d="m5 2 5 5"/><path d="M2 13h15"/><path d="M22 20a2 2 0 1 1-4 0c0-1.6 1.7-2.4 2-4 .3 1.6 2 2.4 2 4Z"/>',
+        "Paint Bucket", "K"],
+    ["eyedropper", '<path d="m2 22 1-1h3l9-9"/><path d="M3 21v-3l9-9"/><path d="m15 6 3.4-3.4a2.1 2.1 0 1 1 3 3L18 9l.4.4a2.1 2.1 0 1 1-3 3l-3.8-3.8a2.1 2.1 0 1 1 3-3l.4.4Z"/>',
+        "Eyedropper — Shift-click picks fill", "I"],
 ];
 const CURSORS = { select: "default", transform: "move", text: "text" };
 
@@ -1033,12 +1131,14 @@ function setTool(t) {
     tool = t;
     stage.style.cursor = CURSORS[t] || "crosshair";
     document.querySelectorAll("#tools button").forEach(b => b.classList.toggle("active", b.dataset.tool === t));
+    $("toolName").textContent = TOOLS.find(x => x[0] === t)[2].split(" — ")[0];
 }
 
 for (const [id, icon, name, key] of TOOLS) {
     const b = document.createElement("button");
     b.dataset.tool = id;
-    b.textContent = icon;
+    b.innerHTML = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icon}</svg><span class="key">${key}</span>`;
     b.title = `${name} (${key})`;
     b.ariaLabel = name;
     b.onclick = () => setTool(id);
@@ -1056,6 +1156,9 @@ const frameItems = [
     ["Insert Keyframe", "F6", frameOp(f => insertKey(f, false))],
     ["Insert Blank Keyframe", "F7", frameOp(f => insertKey(f, true))],
     ["Clear Keyframe", "Shift+F6", frameOp(clearKey)],
+    "-",
+    ["Copy Frame", "", copyFrame],
+    ["Paste Frame", "", () => pasteFrame()],
     "-",
     ["Create Classic Tween", "", () => setTween(true)],
     ["Remove Tween", "", () => setTween(false)],
@@ -1082,6 +1185,9 @@ const menus = {
         ["Copy", "Mod+C", copySel],
         ["Paste", "Mod+V", paste],
         ["Clear", "Delete", clearSel],
+        "-",
+        ["Copy Frame", "", copyFrame],
+        ["Paste Frame", "", () => pasteFrame()],
         "-",
         ["Select All", "Mod+A", selectAll],
         ["Deselect", "Escape", deselect],
@@ -1186,8 +1292,8 @@ document.addEventListener("keydown", e => {
         const d = e.shiftKey ? 10 : 1;
         const dx = { ArrowLeft: -d, ArrowRight: d }[e.key] || 0, dy = { ArrowUp: -d, ArrowDown: d }[e.key] || 0;
         if (float) {
-            float.x += dx;
-            float.y += dy;
+            float.cx += dx;
+            float.cy += dy;
             render();
         } else if (tool === "transform" && !L().locked) {
             editKey(k => { k.t.x += dx; k.t.y += dy; });
@@ -1231,6 +1337,7 @@ $("size").oninput = () => $("sizeOut").textContent = $("size").value;
 $("bgColor").oninput = () => render();
 $("bgColor").onchange = sync;
 $("onion").onchange = () => render();
+$("onionBefore").oninput = $("onionAfter").oninput = () => render();
 $("fps").onchange = () => { sync(); if (player) { stop(); play(); } };
 $("zoom").onchange = applyZoom;
 $("fileInput").onchange = e => { if (e.target.files[0]) openProject(e.target.files[0]); e.target.value = ""; };
@@ -1255,7 +1362,43 @@ function cellAt(e) {
     return true;
 }
 
-$("grid").onclick = cellAt;
+let tdrag = null;
+const grid = $("grid");
+
+grid.onpointerdown = e => {
+    const cell = e.target.closest("[data-i]");
+    if (!cell || e.button !== 0) return;
+    stop();
+    grid.setPointerCapture(e.pointerId);
+    const i = +cell.dataset.i;
+    if (cell.dataset.l) layerIdx = +cell.dataset.l;
+    const f = L().frames;
+    // grabbing a keyframe moves it (with its held frames); anything else scrubs
+    tdrag = cell.dataset.l && isKey(f, i) && !L().locked ? { from: i, to: i, n: endOf(f, i) - i + 1 } : { scrub: true };
+    go(i);
+};
+
+grid.onpointermove = e => {
+    if (!tdrag) return;
+    const i = Math.max(0, Math.floor((e.clientX - grid.getBoundingClientRect().left) / CW));
+    if (tdrag.scrub) {
+        if (i !== current) go(i);
+        return;
+    }
+    if (i === tdrag.to) return;
+    tdrag.to = i;
+    const g = grid.querySelector(".ghost") || grid.appendChild(Object.assign(document.createElement("div"), { className: "ghost" }));
+    g.style.left = i * CW + "px";
+    g.style.top = 18 + layerIdx * 24 + "px";
+    g.style.width = tdrag.n * CW + "px";
+};
+
+grid.onpointerup = grid.onpointercancel = () => {
+    const d = tdrag;
+    tdrag = null;
+    if (d && !d.scrub && d.to !== d.from) moveFrames(d.from, d.n, d.to);
+    else drawTimeline();
+};
 $("grid").oncontextmenu = e => {
     e.preventDefault();
     if (cellAt(e)) showMenu(frameItems, e.clientX, e.clientY);
@@ -1414,13 +1557,14 @@ function hostSession() {
             net.conns.push(c);
             c.send({ ...delta(true), full: true });
             flash("Someone joined");
+            sendCursor();
             showShare();
         });
         c.on("data", m => receive(m, c));
         c.on("close", () => {
             if (!net) return;
             net.conns = net.conns.filter(o => o !== c);
-            const gone = { from: c.peer, cursor: null };
+            const gone = { from: c.peer, gone: true };
             showCursor(gone);
             broadcast(gone);
             flash("Someone left");
@@ -1443,6 +1587,7 @@ function joinSession(code) {
             net.conns.push(c);
             net.ready = true;
             flash("Joined session " + code);
+            sendCursor();
             showShare();
         });
         c.on("data", m => receive(m, c));
@@ -1465,6 +1610,7 @@ function leave() {
     sent.keys.clear();
     for (const c of cursors.values()) c.el.remove();
     cursors.clear();
+    drawPeople();
     showShare();
 }
 
@@ -1498,7 +1644,7 @@ addEventListener("pagehide", leave);
 
 // ---------- live cursors ----------
 
-const cursors = new Map();           // peer id -> { el, x, y, f }
+const cursors = new Map();           // peer id -> { el, name, x, y, f: frame, l: layer id }
 let myPos = null, lastCursorSent = 0;
 
 function myName() {
@@ -1513,15 +1659,15 @@ function colorOf(id) {
 
 function sendCursor() {
     if (!net || !net.conns.length) return;
-    broadcast({ from: net.peer.id, name: myName(), cursor: myPos && { x: myPos.X, y: myPos.Y, f: current } });
+    broadcast({ from: net.peer.id, name: myName(), f: current, l: L().id, cursor: myPos && { x: myPos.X, y: myPos.Y } });
 }
 
 function showCursor(m) {
     let c = cursors.get(m.from);
-    if (!m.cursor) {
+    if (m.gone) {
         if (c) c.el.remove();
         cursors.delete(m.from);
-        return;
+        return drawPeople();
     }
     if (!c) {
         const el = document.createElement("div");
@@ -1529,18 +1675,41 @@ function showCursor(m) {
         el.style.color = colorOf(m.from);
         el.innerHTML = `<svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path d="M2 1l13 7-6 1.5L6 16z" fill="currentColor" stroke="#fff" stroke-width="1.2"/></svg><span></span>`;
         document.body.append(el);
-        cursors.set(m.from, c = { el });
+        cursors.set(m.from, c = { el, x: 0, y: 0 });
     }
-    Object.assign(c, m.cursor);
-    c.el.lastChild.textContent = `${m.name} · F${m.cursor.f + 1}`;
+    Object.assign(c, { name: m.name, f: m.f, l: m.l }, m.cursor);
+    c.el.hidden = !m.cursor;                       // still listed in People while off the stage
+    c.el.lastChild.textContent = `${m.name} · F${m.f + 1}`;
     c.el.lastChild.style.background = colorOf(m.from);
     placeCursors();
+    drawPeople();
+}
+
+function drawPeople() {
+    const box = $("people");
+    box.innerHTML = "";
+    for (const [id, c] of cursors) {
+        const b = document.createElement("button");
+        b.className = "person";
+        b.style.borderColor = colorOf(id);
+        b.textContent = `${c.name} · F${c.f + 1}`;
+        b.title = `Jump to ${c.name}'s frame and layer`;
+        b.onclick = () => {
+            stop();
+            const li = layers.findIndex(l => l.id === c.l);
+            if (li >= 0) layerIdx = li;
+            go(c.f);
+            flash(`On ${c.name}'s frame. Use Copy Frame or select + ${isMac ? "⌘" : "Ctrl+"}C to grab their work`);
+        };
+        box.append(b);
+    }
 }
 
 function placeCursors() {
     if (!cursors.size) return;
     const r = stage.getBoundingClientRect();
     for (const c of cursors.values()) {
+        if (c.el.hidden) continue;
         c.el.style.transform = `translate(${r.left + c.x * r.width / W}px, ${r.top + c.y * r.height / H}px)`;
         c.el.classList.toggle("away", c.f !== current);     // dimmed when they're on another frame
     }
@@ -1554,6 +1723,7 @@ stage.addEventListener("pointermove", e => {
 });
 stage.addEventListener("pointerleave", () => { myPos = null; sendCursor(); });
 $("stageWrap").addEventListener("scroll", placeCursors);
+setInterval(sendCursor, 5000);       // lets people who join later see everyone
 addEventListener("resize", placeCursors);
 
 try { $("myName").value = localStorage.getItem("motionly-name") || ""; } catch {}
