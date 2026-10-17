@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Motionly</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+
+    <header class="menubar">
+        <span class="logo">Motionly</span>
+        <nav id="menus"></nav>
+        <span class="spacer"></span>
+        <button id="shareBtn" class="share">Share</button>
+        <label class="zoom">Zoom
+            <select id="zoom">
+                <option value="fit">Fit</option>
+                <option value="0.25">25%</option>
+                <option value="0.5">50%</option>
+                <option value="1">100%</option>
+                <option value="2">200%</option>
+                <option value="4">400%</option>
+                <option id="zoomCustom" hidden></option>
+            </select>
+        </label>
+    </header>
+    <div id="menu" class="dropdown" hidden></div>
+
+    <nav class="tools" id="tools"></nav>
+
+    <main class="stage fit" id="stageWrap">
+        <canvas id="canvas" width="800" height="500"></canvas>
+    </main>
+
+    <aside class="panel">
+        <div class="tabs">
+            <button class="tab active" data-tab="propsTab">Properties</button>
+            <button class="tab" data-tab="libTab">Library</button>
+            <button class="tab" data-tab="histTab">History</button>
+        </div>
+
+        <section id="propsTab" class="props">
+            <h2>Tool</h2>
+            <label>Stroke <input type="color" id="stroke" value="#000000"></label>
+            <label>Fill <input type="color" id="fill" value="#3b82f6"></label>
+            <label><input type="checkbox" id="fillShapes"> Fill shapes</label>
+            <label>Size <span id="sizeOut">10</span>
+                <input type="range" id="size" min="1" max="100" value="10">
+            </label>
+
+            <h2>Keyframe</h2>
+            <fieldset id="keyProps">
+                <label>X <input type="number" id="kx"></label>
+                <label>Y <input type="number" id="ky"></label>
+                <label>Scale X % <input type="number" id="ksx"></label>
+                <label>Scale Y % <input type="number" id="ksy"></label>
+                <label>Rotate ° <input type="number" id="kr"></label>
+                <label>Alpha % <input type="number" id="ka" min="0" max="100"></label>
+                <label class="wide"><input type="checkbox" id="ktween"> Classic tween</label>
+                <label class="wide">Ease <input type="number" id="kease" min="-100" max="100" title="-100 = ease in, 100 = ease out"></label>
+            </fieldset>
+
+            <h2>Document</h2>
+            <label>Stage color <input type="color" id="bgColor" value="#ffffff"></label>
+            <label>FPS <input type="number" id="fps" min="1" max="60" value="12"></label>
+            <label><input type="checkbox" id="onion" checked> Onion skin</label>
+            <label><input type="checkbox" id="loop" checked> Loop</label>
+        </section>
+
+        <section id="libTab" class="props" hidden>
+            <button id="importLibBtn">Import to Library…</button>
+            <div id="library"></div>
+        </section>
+
+        <section id="histTab" class="props" hidden>
+            <button id="saveVersionBtn" class="primary">Save version…</button>
+            <p class="hint">Autosaves every 5 minutes while you work. Versions are kept in this browser.</p>
+            <div id="versions"></div>
+        </section>
+    </aside>
+
+    <footer class="timeline">
+        <div class="controls">
+            <button id="firstBtn" title="First frame (Home)" aria-label="First frame">⏮</button>
+            <button id="prevBtn" title="Previous frame (,)" aria-label="Previous frame">◀</button>
+            <button id="playBtn" title="Play / Stop (Enter)" aria-label="Play">▶</button>
+            <button id="nextBtn" title="Next frame (.)" aria-label="Next frame">▶▏</button>
+            <button id="lastBtn" title="Last frame (End)" aria-label="Last frame">⏭</button>
+            <span id="counter">1 / 1</span>
+            <label class="autokey" title="Drawing on a later frame of a span turns it into its own keyframe">
+                <input type="checkbox" id="autoKey" checked> Auto keyframe
+            </label>
+            <span id="status" role="status"></span>
+            <span class="spacer"></span>
+            <button id="addLayerBtn" title="New layer">+ Layer</button>
+            <button id="delLayerBtn" title="Delete layer">− Layer</button>
+            <button id="upBtn" title="Move layer up" aria-label="Move layer up">▲</button>
+            <button id="downBtn" title="Move layer down" aria-label="Move layer down">▼</button>
+        </div>
+        <div class="tl">
+            <div class="lcol">
+                <div class="lhead">Layers</div>
+                <div id="layerList"></div>
+            </div>
+            <div class="gwrap" id="gridWrap">
+                <div class="grid" id="grid"></div>
+            </div>
+        </div>
+    </footer>
+
+    <dialog id="docDlg">
+        <form method="dialog">
+            <h2 id="docTitle">Document Settings</h2>
+            <label>Width <input type="number" id="dW" min="16" max="4000" required></label>
+            <label>Height <input type="number" id="dH" min="16" max="4000" required></label>
+            <label>Frame rate <input type="number" id="dFps" min="1" max="60" required></label>
+            <label>Stage color <input type="color" id="dBg"></label>
+            <div class="buttons">
+                <button value="cancel" formnovalidate>Cancel</button>
+                <button value="ok" class="primary">OK</button>
+            </div>
+        </form>
+    </dialog>
+
+    <dialog id="shareDlg">
+        <form method="dialog">
+            <h2>Multiplayer</h2>
+            <label class="namefield">Your name <input id="myName" maxlength="24" autocomplete="nickname"></label>
+            <div id="netOff" class="stack">
+                <p class="hint">Host a session and share the code, or join someone else's with theirs.</p>
+                <button type="button" id="hostBtn" class="primary">Host a session</button>
+                <label>Join code <input id="joinCode" maxlength="6" autocomplete="off" spellcheck="false" placeholder="ABC123"></label>
+                <button type="button" id="joinBtn">Join</button>
+            </div>
+            <div id="netOn" class="stack" hidden>
+                <output id="codeOut" class="code"></output>
+                <p id="netInfo" class="hint"></p>
+                <button type="button" id="copyCodeBtn">Copy code</button>
+                <button type="button" id="leaveBtn">Leave session</button>
+            </div>
+            <div class="buttons">
+                <button value="close">Close</button>
+            </div>
+        </form>
+    </dialog>
+
+    <input type="file" id="fileInput" accept=".json,application/json" hidden>
+    <input type="file" id="imgInput" accept="image/*" multiple hidden>
+
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="script.js"></script>
+
+</body>
+</html>
